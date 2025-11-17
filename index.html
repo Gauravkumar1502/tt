@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deployment Dashboard</title>
+  <style>
+    body { font-family: Inter, sans-serif; background: #f4f6f8; margin: 0; padding: 40px 0; }
+    .container { width: 90%; max-width: 600px; margin: auto; background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    h2 { margin-top: 0; font-size: 26px; font-weight: 600; text-align: center; }
+    button { padding: 10px 20px; font-size: 15px; border-radius: 8px; border: none; background: #2563eb; color: white; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #1d4ed8; }
+    select { padding: 10px; font-size: 15px; width: 100%; border: 1px solid #ccc; border-radius: 8px; }
+    #status { padding: 12px 0; font-size: 14px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Deployment Dashboard</h2>
+
+    <div id="auth-section">
+      <p>You must authenticate with GitHub to continue.</p>
+      <button id="login-btn">Authenticate</button>
+    </div>
+
+    <div id="main" class="hidden">
+      <h3>Select Tag</h3>
+      <select id="tags"></select>
+
+      <h3 style="margin-top:20px;">Deploy</h3>
+      <button id="deploy-btn">Deploy Selected Tag</button>
+
+      <p id="status"></p>
+    </div>
+  </div>
+
+<script>
+// CONFIG + JS unchanged
+const CLIENT_ID = "REPLACE_WITH_YOUR_GITHUB_OAUTH_CLIENT_ID";
+const REPO_OWNER = "REPLACE_WITH_OWNER";
+const REPO_NAME = "REPLACE_WITH_REPO";
+const WORKFLOW_FILE = "deploy.yml";
+let ACCESS_TOKEN = null;
+
+async function login() {
+  const res = await fetch("https://github.com/login/device/code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: CLIENT_ID, scope: "repo" })
+  });
+  const data = await res.json();
+  alert(`Open ${data.verification_uri} and enter code: ${data.user_code}`);
+  const token = await pollForToken(data);
+  ACCESS_TOKEN = token;
+  document.getElementById("auth-section").classList.add("hidden");
+  document.getElementById("main").classList.remove("hidden");
+  await loadTags();
+}
+
+async function pollForToken(deviceData) {
+  while (true) {
+    await new Promise(r => setTimeout(r, deviceData.interval * 1000));
+    const res = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({
+        client_id: CLIENT_ID,
+        device_code: deviceData.device_code,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+      })
+    });
+    const tokenData = await res.json();
+    if (tokenData.access_token) return tokenData.access_token;
+  }
+}
+
+async function loadTags() {
+  const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/tags`, {
+    headers: { Authorization: `Bearer ${ACCESS_TOKEN}` }
+  });
+  const tags = await res.json();
+  const select = document.getElementById("tags");
+  select.innerHTML = tags.map(t => `<option value="${t.name}">${t.name}</option>`).join("");
+}
+
+async function deploy() {
+  const tag = document.getElementById("tags").value;
+  const body = { ref: "main", inputs: { tag } };
+  const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ACCESS_TOKEN}` },
+    body: JSON.stringify(body)
+  });
+  document.getElementById("status").innerText = res.status === 204 ? `Deployment started for tag: ${tag}` : `Error: ${res.status}`;
+}
+
+document.getElementById("login-btn").addEventListener("click", login);
+document.getElementById("deploy-btn").addEventListener("click", deploy);
+</script>
+</body>
+</html>
